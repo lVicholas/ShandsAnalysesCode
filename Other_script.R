@@ -1,131 +1,164 @@
 library(readxl)
 library(writexl)
 library(MASS)
+library(AER)
 
-setwd("C:/local/R/ThomasStudy")
+setwd("C:/local/R/OtherStudy")
 data=data.frame(read_xlsx("Encounters in IBD With Race and Ethnicity.xlsx"))
 
-# Extract each of 8 tables
-ambulatory1=data[3:10,3:6]
-ambulatory2=data[3:10,10:13]
-ed1=data[13:20,3:6]
-ed2=data[13:20,10:13]
-ed_to_inpatient1=data[23:30,3:6]
-ed_to_inpatient2=data[23:30,10:13]
-inpatient1=data[33:40,3:6]
-inpatient2=data[33:40,10:13]
+response_names=c("Ambulatory_total","Ed_total","Ed_to_inpatient_total","Inpatient_total",
+                 "Ambulatory_+_anti-TNF","Ed_+_anti-TNF","Ed_to_inpatient_+_anti-TNF","Inpatient_+_anti-TNF",
+                 "Ambulatory_-_anti-TNF","Ed_-_anti-TNF","Ed_to_inpatient_-_anti-TNF","Inpatient_-_anti-TNF")
 
-table_list=list(ambulatory1,ambulatory2,ed1,ed2,ed_to_inpatient1,ed_to_inpatient2,inpatient1,inpatient2)
+# Total # of people in database for each race
+# 1st 4 elements for Caucasians, Hispanics, African-Americans, Asian-Americans
+# 2nd 4 elements for # of each race taking an anti-TNF
+race_totals=c(32138,6690,4835,370,3855,657,489,31)
+race_totals=t(data.frame(c(race_totals,race_totals[1:4]-race_totals[5:8])))
+names(race_totals)=c("Caucassians_total","Hispanics_total","African_Americans_total","Asian_Americans_total",
+                     "Caucassians_+_anti-TNF","Hispanics_+_anti-TNF","African_Americans_+_anti-TNF","Asian_Americans_+_anti-TNF",
+                     "Caucassians_-_anti-TNF","Hispanics_-_anti-TNF","African_Americans_-_anti-TNF","Asian_Americans_-_anti-TNF")
 
-appendTotals=function(table){
-  nt=table
-  nt=rbind(nt,colSums(nt))
-  nt=cbind(nt,rowSums(nt))
-  return(data.frame(nt))
-}
+# Numbers of people who did not use a response (e.g. ambulatory visit)
+# Also separated by anti-TNF status
+race_zero_counts=list()
+race_zero_counts[["Ambulatory_total"]]=c(2001,527,272,33)
+race_zero_counts[["ED_total"]]=c(12438,1525,985,167)
+race_zero_counts[["ED_to_Inpatient_total"]]=c(18522,3383,2175,243)
+race_zero_counts[["Inpatient_total"]]=c(18253,3628,2524,219)
 
-# For each of 8 tables, ensure entries are numeric, add row/col sums, give proper row/col names
-for(i in 1:length(table_list)){
-  
-  tab=data.frame(table_list[[i]])
-  tab=apply(tab,2,as.numeric)
-  tab=appendTotals(tab)
-  
-  if(i %% 2 == 1)
-    names(tab)=c("IBD_in_Caucasians_(NONHISPANIC_+_WHITE)","IBD_in_Hispanics",
-                             "IBD_in_African_Americans","IBD_in_Asian_Americans",
-                             "Row_Totals")
-  else names(tab)=c("IBD_+anti-TNF_in_Caucasians_(NON-HISPANIC_+_WHITE)","IBD_+_anti-TNF_in_Hispanics",
-                                "IBD_+anti-TNF_in_African_Americans","IBD_+_anti-TNF_in_Asian_Americans",
-                                "Row_Totals")
-  
-  row.names(tab)=c("0-9yo","10-17yo","18-34yo","35-44yo","45-54yo","55-64yo","65-74yo","75-84yo",
-                               "Column_Totals")
-  
-  table_list[[i]]=tab #/tab[nrow(tab),ncol(tab)]
-  
-}
+race_zero_counts[["Ambulatory_+_anti-TNF"]]=c(39,8,0,0)
+race_zero_counts[["ED_+_anti-TNF"]]=c(1985,161,138,23)
+race_zero_counts[["ED_to_inpatient_+_anti-TNF"]]=c(2583,403,235,27)
+race_zero_counts[["Inpatient_+_anti-TNF"]]=c(2256,196,250,17)
 
-# Most counts (by race) suffer from overdispersion
-cbind(apply(table_list[[1]],2,sd),apply(table_list[[1]],2,mean))
-cbind(apply(table_list[[2]],2,sd),apply(table_list[[2]],2,mean))
-cbind(apply(table_list[[3]],2,sd),apply(table_list[[3]],2,mean))
-cbind(apply(table_list[[4]],2,sd),apply(table_list[[4]],2,mean))
-cbind(apply(table_list[[5]],2,sd),apply(table_list[[5]],2,mean))
-cbind(apply(table_list[[6]],2,sd),apply(table_list[[6]],2,mean))
-cbind(apply(table_list[[7]],2,sd),apply(table_list[[7]],2,mean))
-cbind(apply(table_list[[8]],2,sd),apply(table_list[[8]],2,mean))
+race_zero_counts[["Ambulatory_-_anti-TNF"]]=race_zero_counts[[1]]-race_zero_counts[[5]]
+race_zero_counts[["ED_-_anti-TNF"]]=race_zero_counts[[2]]-race_zero_counts[[6]]
+race_zero_counts[["ED_to_inpatient_-_anti-TNF"]]=race_zero_counts[[3]]-race_zero_counts[[7]]
+race_zero_counts[["Inpatient_-_anti-TNF"]]=race_zero_counts[[4]]-race_zero_counts[[8]]
 
-# Most counts (by age group) suffer from overdispersion
-cbind(apply(table_list[[1]],1,sd),apply(table_list[[1]],1,mean))
-cbind(apply(table_list[[2]],1,sd),apply(table_list[[2]],1,mean))
-cbind(apply(table_list[[3]],1,sd),apply(table_list[[3]],1,mean))
-cbind(apply(table_list[[4]],1,sd),apply(table_list[[4]],1,mean))
-cbind(apply(table_list[[5]],1,sd),apply(table_list[[5]],1,mean))
-cbind(apply(table_list[[6]],1,sd),apply(table_list[[6]],1,mean))
-cbind(apply(table_list[[7]],1,sd),apply(table_list[[7]],1,mean))
-cbind(apply(table_list[[8]],1,sd),apply(table_list[[8]],1,mean))
-
-melt_by_race=function(tab){
+# Get tables for comparisons across race #####
+race_t_test=function(r1,r2,response,TNF){
   
-  return=data.frame(matrix(NA,nrow=nrow(tab)*2),ncol=2)
-  names(return)=c("Race","Count")
+  # For races r1 and r2, perform Welch t-test for difference in proportions of
+  # people in each race responsible for at least 1 occurence of response
   
-  return[1:(nrow(return)/2),1:2]=cbind(rep(names(tab)[1],nrow(tab)),tab[1:nrow(tab),1])
-  return[(1+nrow(return)/2):nrow(return),1:2]=cbind(rep(names(tab)[2],nrow(tab)),tab[1:nrow(tab),2])
+  n1=as.numeric(race_totals[4*TNF+r1])
+  c1=n1-race_zero_counts[[4*TNF+response]][r1]
+  n2=as.numeric(race_totals[4*TNF+r2])
+  c2=n2-race_zero_counts[[4*TNF+response]][r2]
   
-  return=data.frame(return)
-  return[,2]=as.numeric(return[,2])
-  
-  return(data.frame(return))
+  x=rep(c(1,0),c(c1,n1-c1))
+  y=rep(c(1,0),c(c2,n2-c2))
+  return(t.test(x,y,var.equal=F))
   
 }
-
-# Since overdispersion is present, fit negative-binomial models to race variables
-get_race_mods=function(table){
-  mods=list()
-  for(j in 2:(ncol(table)-1)){
-    data=melt_by_race(table[1:8,c(1,j)])
-    mods[[j-1]]=glm.nb(Count~as.factor(Race),data=data)
+get_table_race_t_tests=function(r1,r2){
+  
+  # Gets table of Welch t-tests for differnce in proportions between races of number of people
+  # responsible for at least 1 occurence of response
+  # E.g., test whether Caucasians are more likely to have at least 1 ambulatory visit than Hispanics
+  # Also tests based on anti-TNF status
+  
+  rows=response_names
+  N1=N2=c()
+  C1=C2=c()
+  r1.p=r2.p=c()
+  T.vec=P=c()
+  CI=c()
+  
+  for(i in 1:4){
+    for(j in 0:2){
+      
+      N1[4*j+i]=as.numeric(race_totals[4*j+r1])
+      N2[4*j+i]=as.numeric(race_totals[4*j+r2])
+      C1[4*j+i]=N1[4*j+i]-race_zero_counts[[4*j+i]][r1]
+      C2[4*j+i]=N2[4*j+i]-race_zero_counts[[4*j+i]][r2]
+      
+      x=rep(c(1,0),c(C1[4*j+i],N1[4*j+i]-C1[4*j+i]))
+      y=rep(c(1,0),c(C2[4*j+i],N2[4*j+i]-C2[4*j+i]))
+      test=t.test(x,y,var.equal=F)
+      
+      r1.p[4*j+i]=round(test$estimate[1],4)
+      r2.p[4*j+i]=round(test$estimate[2],4)
+      
+      T.vec[4*j+i]=round(test$statistic,4)
+      P[4*j+i]=round(test$p.value,4)
+      
+      CI[4*j+i]=paste("(",round(test$conf.int[1],3),", ",round(test$conf.int[2],3),")",sep="")
+      
+    }
   }
-  return(mods)
+  
+  D=data.frame(rows,N1,C1,N2,C2,r1.p,r2.p,T.vec,P,CI)
+  names(D)=c("Response",
+             paste(names(race_totals)[r1],"n"), paste("# of successes",names(race_totals)[r1]),
+             paste(names(race_totals)[r2],"n"), paste("# of successes",names(race_totals)[r2]),
+             paste(names(race_totals)[r1],"proportion successes"), 
+             paste(names(race_totals)[r2],"proportion successes"),
+             "Welch test t-stat","Welch test p-val","95% Conf.Int")
+  return(D)
+  
 }
 
-# Get models for each response comparing Causassians to other minorities
-list_of_list_of_race_mods=list()
-for(i in 1:length(table_list))
-  list_of_list_of_race_mods[[i]]=get_race_mods(table_list[[i]])
+caucasian_vs_other_races_test=list(Caucasians_VS_Hispanics=get_table_race_t_tests(1,2),
+                                   Caucasians_VS_African_Americans=get_table_race_t_tests(1,3),
+                                   Caucasians_VS_Asian_Americans=get_table_race_t_tests(1,4))
+write_xlsx(caucasian_vs_other_races_test,"Caucasians_vs_Other_Races.xlsx")
 
-print_list_mods=function(mods){
-  for(i in 1:length(mods))
-    print(summary(mods[[i]]))
-}
-write_mod_list_to_excel=function(mods, workbook_name){
-  sheets=list()
-  for(i in 1:length(mods)){
-    sheets[[paste("sheet",i,"Name",sep="")]]=data.frame(attr(coef(summary(mods[[i]])),"dimnames")[[1]],
-                                                        coef(summary(mods[[i]])))
+hispanics_vs_other_races=list(Hispanics_VS_Caucasians=get_table_race_t_tests(2,1),
+                              Hispanics_VS_African_Americans=get_table_race_t_tests(2,3),
+                              Hispanics_VS_Asian_Americans=get_table_race_t_tests(2,4))
+write_xlsx(hispanics_vs_other_races,"Hispanics_vs_Other_Races.xlsx")
+
+# Get tables for comparisons across TNF status #####
+
+get_TNF_comparisons=function(race){
+  
+  # Compares proportions of people with at least 1 use of response for each race with and without anti-TNF
+  # E.g., whether Hispanics on anti-TNF are more likely to have at least 1 ED visit than Hispanics not on anti-TNF
+  
+  resp_names=c("Ambulatory","ED","ED_to_inpatient","Inpatient")
+  N1=N2=c()
+  C1=C2=c()
+  TNF.p=non_TNF.p=c()
+  T.vec=P=c()
+  CI=c()
+  
+  for(i in 1:4){
+    
+    N1[i]=race_totals[race+4]
+    N2[i]=race_totals[race+8]
+    
+    C1[i]=N1[i]-race_zero_counts[[i+4]][race]
+    C2[i]=N2[i]-race_zero_counts[[i+8]][race]
+    
+    x=rep(c(1,0),c(C1[i],N1[i]-C1[i]))
+    y=rep(c(1,0),c(C2[i],N2[i]-C2[i]))
+    test=t.test(x,y,var.equal=F)
+    
+    TNF.p[i]=round(test$estimate[1],4)
+    non_TNF.p[i]=round(test$estimate[2],4)
+    
+    T.vec[i]=round(test$statistic,4)
+    P[i]=round(test$p.value,4)
+    
+    CI[i]=paste("(",round(test$conf.int[1],3),", ",round(test$conf.int[2],3),")",sep="")
+    
   }
-  write_xlsx(sheets,workbook_name)
+  
+  D=data.frame(resp_names,N1,C1,N2,C2,TNF.p,non_TNF.p,T.vec,P,CI)
+  names(D)=c("Response",
+             "n for anti-TNF", "# of successes for anti-TNF",
+             "n for non-anti-TNF","# of successes for non-anti-TNF",
+             "anti-TNF proportion of successes","non-anti-TNF proportion of successes",
+             "Welch t-statistic","Welch p-value","95% Conf.int")
+  return(D)
+  
 }
 
-# Print and Write_to_Excel block #####
-print_list_mods(list_of_list_of_race_mods[[1]])
-print_list_mods(list_of_list_of_race_mods[[2]])
-print_list_mods(list_of_list_of_race_mods[[3]])
-print_list_mods(list_of_list_of_race_mods[[4]])
-print_list_mods(list_of_list_of_race_mods[[5]])
-print_list_mods(list_of_list_of_race_mods[[6]])
-print_list_mods(list_of_list_of_race_mods[[7]])
-print_list_mods(list_of_list_of_race_mods[[8]])
-
-write_mod_list_to_excel(list_of_list_of_race_mods[[1]], "Ambulatory1.xlsx")
-write_mod_list_to_excel(list_of_list_of_race_mods[[2]], "Ambulatory2.xlsx")
-write_mod_list_to_excel(list_of_list_of_race_mods[[3]], "Ed1.xlsx")
-write_mod_list_to_excel(list_of_list_of_race_mods[[4]], "Ed2.xlsx")
-write_mod_list_to_excel(list_of_list_of_race_mods[[5]], "Ed_to_inpatient1.xlsx")
-write_mod_list_to_excel(list_of_list_of_race_mods[[6]], "Ed_to_inpatient2.xlsx")
-write_mod_list_to_excel(list_of_list_of_race_mods[[7]], "Inpatient1.xlsx")
-write_mod_list_to_excel(list_of_list_of_race_mods[[8]], "Inpatient2.xlsx")
-
-# Models by age group #####
+TNF_comparisons=list(Caucasians=get_TNF_comparisons(1),
+                     Hispanics=get_TNF_comparisons(2),
+                     African_Americans=get_TNF_comparisons(3),
+                     Asian_Americans=get_TNF_comparisons(4))
+write_xlsx(TNF_comparisons,"TNF_comparisons.xlsx")
