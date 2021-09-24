@@ -11,10 +11,11 @@ library(dplyr)
 library(mice)
 library(bnlearn)
 library(Rgraphviz)
+library(pROC)
 
-setwd("~/R/FistulaStudy")
+setwd("C:/local/R/FistulaStudy")
 source=data.frame(read_excel("RadData2.xlsx"))
-df=data.frame(read_excel("RadData2.xlsx"))   
+df=data.frame(read_excel("RadData2.xlsx"))
 
 ########## Data Entry ##########
 # Getting original responses #####
@@ -66,8 +67,7 @@ for(j in df.catvars)
 
 # PredData definition #####
 predData1=df[,c(2:6,8:10,12,14,19,20,24,26,28,30,32,
-                34:36,38,41:44,46,49:51,53,
-                40,48,55)] # <-- Jack-inhibitors
+                34:36,38,40:44,46,48:51,53,55)]
 # Variable exclusions include:
 # variables after medication variables
 # date variables
@@ -85,7 +85,6 @@ standardize=function(predData){
   return (predData)
 }
 
-
 predData1.stan=standardize(predData1)
 
 # Imputation of predData1.stan #####
@@ -94,7 +93,7 @@ predData1.stan.imp1=mice(predData1.stan,maxit=0,seed=10+07+2021)
 predData1.stan.predM=predData1.stan.imp1$predictorMatrix
 predData1.stan.meth=predData1.stan.imp1$method
 
-predData1.stan.imp=mice(predData1.stan,maxit=15,m=200,
+predData1.stan.imp=mice(predData1.stan,maxit=15,m=50,
                    predictorMatrix=predData1.stan.predM,
                    method=predData1.stan.meth,
                    print=F,seed=10+07+2021)
@@ -208,8 +207,6 @@ getFistulaTable=function(fistula,resp){
   # Equivalent to confusion matrix using fistula as predictor and resp as reference
   return(table(fistula,resp))
 }
-# QUESTIONS #####
-
 # Getting table of significant univariate models for predData1 on non-combined responses #####
 
 unitab1=getUniModels(predData1,respData.original,respData.original.types,.05)[[1]]
@@ -228,37 +225,60 @@ preds.include=c(predData1.radPreds,
 
 
 # DAG Helper functions #####
-DAG_by_imputation=function(imp, bl, resp, predNames, respName){
+DAG_by_imputation=function(imp, bl, resp, predNames, respNames){
   
   # Get bootstrapped DAG for each version of imputed data, then average those DAGS
   
   dags=list()
+  strengths=matrix(NA, imp$m, 200)
+  
+  
   for(i in 1:(imp$m)){
     df=data.frame(mice::complete(imp,i),resp)
-    names(df)=c(predNames,respName)
-    dags[[i]]=averaged.network(boot.strength(df,R=30,algorithm="hc",algorithm.args=list(blacklist=bl)))
+    names(df)=c(predNames,respNames)
+  
+    dags[[i]]=averaged.network(boot.strength(df,R=200,algorithm="hc",algorithm.args=list(blacklist=bl)))
+    
+    # dag=boot.strength(df,R=200,algorithm="hc",algorithm.args=list(blacklist=bl))
+    # strengths[i,]=boot.strength(df,R=200,algorithm="hc",algorithm.args=list(blacklist=bl))$strength
+    
+    
   }
   arcs=custom.strength(dags,nodes=names(df),cpdag=F)
+  
+  
+  
   dag.avg=averaged.network(arcs)
   return(list(arcs, dag.avg))
 }
-get_blacklist=function(df, dem_indices){
+get_blacklist=function(df,resp_indices,meds1_indices,meds2_indices,meds3_indices){
   
   # Blacklist arcs for each dataset (e.g., race does not affect age)
   # Also, assume non-demographic variables do not affect non-BMI demographic variables 
   # (e.g., high ESR does not affect gender)
   
-  bl=tiers2blacklist(list(names(df)[dem_indices[-length(dem_indices)]],
-                          names(df)[-dem_indices[-length(dem_indices)]]))
-  bl=rbind(bl,tiers2blacklist(list(c("Age"),
-                                   c("Gender","Race","Smoker","BMI"))))
+  bl=tiers2blacklist(list(c("Age"),
+                          c("Gender","Race","Smoker","BMI")))
   bl=rbind(bl,tiers2blacklist(list(c("Gender"),
                                    c("Age","Race","Smoker","BMI"))))
   bl=rbind(bl,tiers2blacklist(list(c("Race"),
                                    c("Age","Gender","Smoker","BMI"))))
   bl=rbind(bl,tiers2blacklist(list(c("Smoker"),c("BMI"))))
-  bl=rbind(bl,tiers2blacklist(list(names(df)[-ncol(df)],
-                                   names(df)[ncol(df)])))
+  bl=rbind(bl,tiers2blacklist(list(c("Intra.abdominal.Abscess.history.","Abscess.w.in.1yr.prior...Baseline."),
+                                   c("Fistula."))))
+  
+  # Blacklist arcs from med variables to variables recorded before they were recorded
+  bl=rbind(bl,tiers2blacklist(list(names(df)[-c(meds3_indices,resp_indices)],
+                                   names(df)[meds3_indices])))
+  bl=rbind(bl,tiers2blacklist(list(names(df)[-c(meds2_indices,meds3_indices,resp_indices)],
+                                   names(df)[meds2_indices])))
+  bl=rbind(bl,tiers2blacklist(list(names(df)[-c(meds1_indices,meds2_indices,meds3_indices,resp_indices)],
+                                   names(df)[meds1_indices])))
+  
+  for(r in resp_indices)
+    bl=rbind(bl,tiers2blacklist(list(names(df)[-r],
+                                     names(df)[r])))
+  
   return(bl)
   
 }
@@ -316,7 +336,7 @@ get_DAGS=function(pred, resp, respName, HBI_Lab_cols, imp, seed){
   }
   return(dags)
 }
-get_necessary_nodes=function(dag.strength, t){
+get_necessary_nodes=function(dag.strength,t){
   
   # Finds nodes in given DAG bootstrap with strength above threshold t
   # Returns
@@ -336,7 +356,7 @@ get_necessary_nodes=function(dag.strength, t){
   }
   return(list(nodes,indices_to_remove_from_boot))
 }
-lean_strength_plot=function(DAGS,type){
+lean_strength_plot=function(DAGS,type,thresh){
   
   # Prints only nodes in DAG with at least 1 sufficiently strong arc
   
@@ -348,243 +368,145 @@ lean_strength_plot=function(DAGS,type){
   lean_strength=lean_strength[-nn[[2]],]
   lean_avg$nodes=lean_avg$nodes[nn[[1]]]
   
-  return(strength.plot(lean_avg,lean_strength,shape="ellipse"))
+  return(strength.plot(lean_avg,lean_strength,shape="ellipse",threshold=thresh))
+}
+get_connected_nodes=function(avg_model,node_name){
+  
+  connected_nodes_names=c(node_name)
+  i=0
+  
+  repeat{
+    
+    i=i+1
+    
+    l1=union(avg_model$nodes[[connected_nodes_names[i]]]$mb,
+             avg_model$nodes[[connected_nodes_names[i]]]$nbr)
+    l2=union(avg_model$nodes[[connected_nodes_names[i]]]$parents,
+             avg_model$nodes[[connected_nodes_names[i]]]$children)
+    connected_nodes_names=union(connected_nodes_names,union(l1,l2))
+    
+    if(i==length(connected_nodes_names))
+      break
+    
+  }
+  
+  return(connected_nodes_names)
+  
+}
+essential_nodes_plot=function(DAGS,dataset_num,response_names){
+  
+  nn=c()
+  for(response in response_names)
+    nn=union(nn,get_connected_nodes(DAGS[[dataset_num+5]],response))
+  
+  # nn=get_connected_nodes(DAGS[[dataset_num+5]],response_name)
+  
+  essential_strength_rows=which(DAGS[[dataset_num]][,1]%in%nn & 
+                           DAGS[[dataset_num]][,2]%in%nn)
+  essential_strength=DAGS[[dataset_num]][essential_strength_rows,]
+  
+  essential_avg_model=DAGS[[dataset_num+5]]
+  essential_avg_model_node_indices=which(names(essential_avg_model$nodes)%in%nn)
+  essential_avg_model$nodes=essential_avg_model$nodes[essential_avg_model_node_indices]
+  essential_arc_rows=which(essential_avg_model$arcs[,1]%in%nn)
+  essential_avg_model$arcs=essential_avg_model$arcs[essential_arc_rows,]
+  
+  return(strength.plot(essential_avg_model,essential_strength,shape="ellipse"))
+  
 }
 # Original response DAGS #####
 
-# BinAbdSurg DAGs
-BinAbdSurg.DAGS=get_DAGS(predData1.stan,respData.original[,1],"BinAbdSurgeries",c(9,13:17),predData1.stan.imp,1)
-lean_strength_plot(BinAbdSurg.DAGS,1) # Complete cases
-lean_strength_plot(BinAbdSurg.DAGS,2) # Missing only HBI
-lean_strength_plot(BinAbdSurg.DAGS,3) # Missing HBI and labs
-lean_strength_plot(BinAbdSurg.DAGS,4) # Missing labs
-lean_strength_plot(BinAbdSurg.DAGS,5) # Imputed dataset
+# All response DAGS #####
+meds1_indices=18:23
+meds2_indices=24:28
+meds3_indices=29:33
 
-# For each response, create multivariate model wtih variables connected to response in at least 1 DAG
+all_response_dags_data=data.frame(predData1,respData.original[,1:5])
+all_response_dags=rep(list(0),10)
+all_response_dags_cc=list(which(complete.cases(all_response_dags_data)),
+                          which(complete.cases(all_response_dags_data[,-c(9)])),
+                          which(complete.cases(all_response_dags_data[,-c(9,13:17)])),
+                          which(complete.cases(all_response_dags_data[,-c(13:17)]))
+)
+all_response_dags_bl=list(get_blacklist(all_response_dags_data[all_response_dags_cc[[1]],],1:5,34:38),
+                          get_blacklist(all_response_dags_data[all_response_dags_cc[[2]],-c(9)],1:5,33:37),
+                          get_blacklist(all_response_dags_data[all_response_dags_cc[[3]],-c(9,13:17)],1:5,28:32),
+                          get_blacklist(all_response_dags_data[all_response_dags_cc[[4]],-c(13:17)],1:5,29:33),
+                          get_blacklist(all_response_dags_data[all_response_dags_cc[[1]],],1:5,34:38)
+)
 
-# Fistula, Steroid34, CRP (causal to fistula)
-BinAbdSurg.DAGS.glm=glm(respData.original[,1]~.,data=predData1.stan[,c(6,18)],family=binomial())
-summary(BinAbdSurg.DAGS.glm)
+set.seed(0)
 
-# Fistula, Steroids34 still significant when considering stricture, inflammation, labs, abdPain
-summary(glm(respData.original[,1]~.,data=predData1.stan[,c(6,18,13,7:8,14:17,10)],family=binomial()))
+all_response_dags[[1]]=boot.strength(all_response_dags_data[all_response_dags_cc[[1]],],R=200,algorithm="hc",
+                                     algorithm.args=list(blacklist=all_response_dags_bl[[1]]))
+all_response_dags[[2]]=boot.strength(all_response_dags_data[all_response_dags_cc[[2]],-c(9)],R=200,algorithm="hc",
+                                     algorithm.args=list(blacklist=all_response_dags_bl[[2]]))
+all_response_dags[[3]]=boot.strength(all_response_dags_data[all_response_dags_cc[[3]],-c(9,13:17)],R=200,algorithm="hc",
+                                     algorithm.args=list(blacklist=all_response_dags_bl[[3]]))
+all_response_dags[[4]]=boot.strength(all_response_dags_data[all_response_dags_cc[[4]],-c(13:17)],R=200,algorithm="hc",
+                                     algorithm.args=list(blacklist=all_response_dags_bl[[4]]))
+all_response_dags[[6]]=averaged.network(all_response_dags[[1]])
+all_response_dags[[7]]=averaged.network(all_response_dags[[2]])
+all_response_dags[[8]]=averaged.network(all_response_dags[[3]])
+all_response_dags[[9]]=averaged.network(all_response_dags[[4]])
 
-BinAbdSurg.DAGS.glm.imp=pool(with(predData1.stan.imp,glm(respData.original[,1]~.,
-                                                         data=predData1.stan[,c(6,18,13)],
-                                                         family=binomial())))
-summary(BinAbdSurg.DAGS.glm.imp)
+temp=DAG_by_imputation(predData1.stan.imp,
+                       all_response_dags_bl[[5]],
+                       respData.original[,1:5],
+                       names(predData1.stan),
+                       names(respData.original)[1:5])
+all_response_dags[[5]] =temp[[1]]
+all_response_dags[[10]]=temp[[2]]
+rm(list=c("temp"))
 
-# BinOstomy DAGS
-BinOstomy.DAGS=get_DAGS(predData1.stan,respData.original[,2],"BinOstomy",c(9,13:17),predData1.stan.imp,2)
-lean_strength_plot(BinOstomy.DAGS,1)
-lean_strength_plot(BinOstomy.DAGS,2)
-lean_strength_plot(BinOstomy.DAGS,3)
-lean_strength_plot(BinOstomy.DAGS,4)
-lean_strength_plot(BinOstomy.DAGS,5)
+essential_nodes_plot(all_response_dags,1,names(all_response_dags_data)[34:38]) # All predictors (88)
+essential_nodes_plot(all_response_dags,2,names(all_response_dags_data)[34:38]) # All predictors except HBI (137)
+essential_nodes_plot(all_response_dags,3,names(all_response_dags_data)[34:38]) # All predictors except labs and HBI (199)
+essential_nodes_plot(all_response_dags,4,names(all_response_dags_data)[34:38]) # All predictors except labs (120)
+essential_nodes_plot(all_response_dags,5,names(all_response_dags_data)[34:38]) # Imputed dataset (199 x 50)
 
-# Variables taken from unitab (DAGs say no relation)
-# CRP, ESR, Biologics46
-BinOstomy.DAGS.glm=glm(respData.original[,2]~.,data=predData1.stan[,c(13,14,26)],family=binomial())
-summary(BinOstomy.DAGS.glm)
+# Get strengths for arcs to BinAbdSurg
+filter(all_response_dags[[1]], from=="Steroids...20mg.within.2wks...34" & to=="BinAbdSurg")
+filter(all_response_dags[[2]], from=="Steroids...20mg.within.2wks...34" & to=="BinAbdSurg")
+filter(all_response_dags[[2]], from=="Fistula." & to=="BinAbdSurg")
+filter(all_response_dags[[3]], from=="Fistula." & to=="BinAbdSurg")
+filter(all_response_dags[[5]], from=="Fistula." & to=="BinAbdSurg")
 
-# BinHospitalization DAGS
-BinHospitlization.DAGS=get_DAGS(predData1.stan,respData.original[,3],"BinHospitalization",c(9,13:17),predData1.stan.imp,3)
-lean_strength_plot(BinHospitlization.DAGS,1)
-lean_strength_plot(BinHospitlization.DAGS,2)
-lean_strength_plot(BinHospitlization.DAGS,3)
-lean_strength_plot(BinHospitlization.DAGS,4)
-lean_strength_plot(BinHospitlization.DAGS,5)
+# Get strengths for arcs to BinAbscess
+filter(all_response_dags[[1]], from=="Abscess.w.in.1yr.prior...Baseline." & to=="Intra.abd.Abscess.")
+filter(all_response_dags[[3]], from=="Fistula." & to=="Intra.abd.Abscess.")
+filter(all_response_dags[[4]], from=="Abscess.w.in.1yr.prior...Baseline." & to=="Intra.abd.Abscess.")
+filter(all_response_dags[[5]], from=="Fistula." & to=="Intra.abd.Abscess.")
 
-# Fistula, Steroids34, HBI
-BinHospitlization.DAGS.glm=glm(respData.original[,3]~.,data=predData1.stan[,c(6,18,9)],family=binomial())
-summary(BinHospitlization.DAGS.glm)
+# Get strengths for arcs to BinObstruction
+filter(all_response_dags[[1]], from=="Steroids...20mg.within.2wks...34" & to=="BinObstructions")
+filter(all_response_dags[[2]], from=="Steroids...20mg.within.2wks...34" & to=="BinObstructions")
+filter(all_response_dags[[3]], from=="Stricture." & to=="BinObstructions")
+filter(all_response_dags[[4]], from=="Steroids...20mg.within.2wks...34" & to=="BinObstructions")
+filter(all_response_dags[[5]], from=="Stricture." & to=="BinObstructions")
 
-summary(glm(respData.original[,3]~.,data=predData1.stan[,c(6,18,9,13:17)],family=binomial()))
-
-BinHospitlization.DAGS.glm.imp=pool(with(predData1.stan.imp,glm(respData.original[,3]~.,
-                                                                data=predData1.stan[,c(6,18,9)],
-                                                                family=binomial())))
-summary(BinHospitlization.DAGS.glm.imp)
-
-# BinObstructions DAGS
-BinObstruction.DAGS=get_DAGS(predData1.stan,respData.original[,4],"BinObstruction",c(9,13:17),predData1.stan.imp,4)
-lean_strength_plot(BinObstruction.DAGS,1)
-lean_strength_plot(BinObstruction.DAGS,2)
-lean_strength_plot(BinObstruction.DAGS,3)
-lean_strength_plot(BinObstruction.DAGS,4)
-lean_strength_plot(BinObstruction.DAGS,5)
-
-# Stricture, Steroids34
-BinObstruction.DAGS.glm=glm(respData.original[,4]~.,data=predData1.stan[,c(7,18)],family=binomial())
-summary(BinObstruction.DAGS.glm)
-
-BinObstruction.DAGS.glm.imp=pool(with(predData1.stan.imp,glm(respData.original[,4]~.,
-                                                             data=predData1.stan[,c(7,18)],
-                                                             family=binomial())))
-summary(BinObstruction.DAGS.glm.imp)
-
-# BinAbscess DAGS
-BinAbscess.DAGS=get_DAGS(predData1.stan,respData.original[,5],"BinAbscess",c(9,13:17),predData1.stan.imp,5)
-lean_strength_plot(BinAbscess.DAGS,1)
-lean_strength_plot(BinAbscess.DAGS,2)
-lean_strength_plot(BinAbscess.DAGS,3)
-lean_strength_plot(BinAbscess.DAGS,4)
-lean_strength_plot(BinAbscess.DAGS,5)
-
-# Fistula, Abscess w/i 1 year prior
-BinAbscess.DAGS.glm=glm(respData.original[,5]~.,data=predData1.stan[,c(6,12)],family=binomial())
-summary(BinAbscess.DAGS.glm)
-
-# NumAbdSurg DAGS
-NumAbdSurg.DAGS=get_DAGS(predData1.stan,respData.original[,6],"NumAbdSurgeries",c(9,13:17),predData1.stan.imp,6)
-lean_strength_plot(NumAbdSurg.DAGS,1)
-lean_strength_plot(NumAbdSurg.DAGS,2)
-lean_strength_plot(NumAbdSurg.DAGS,3)
-lean_strength_plot(NumAbdSurg.DAGS,4)
-lean_strength_plot(NumAbdSurg.DAGS,5)
-
-# Fistula, Immunodmodulators 51
-NumAbdSurg.DAGS.glm=glm(respData.original[,6]~.,data=predData1.stan[,c(6,29)],family=poisson())
-summary(NumAbdSurg.DAGS.glm)
-
-# Fistula is still significant after including radiological and lab predictors
-summary(glm(respData.original[,6]~.,data=predData1.stan[,c(6,29,7:8,13:17)],family=poisson()))
-
-# NumOstomy DAGS
-NumOstomy.DAGS=get_DAGS(predData1.stan,respData.original[,7],"NumOstomy",c(9,13:17),predData1.stan.imp,7)
-
-# NumHospitalization DAGS
-NumHospitalization.DAGS=get_DAGS(predData1.stan,respData.original[,8],"NumHospitalization",c(9,13:17),predData1.stan.imp,8)
-lean_strength_plot(NumHospitalization.DAGS,1)
-lean_strength_plot(NumHospitalization.DAGS,2)
-lean_strength_plot(NumHospitalization.DAGS,3)
-lean_strength_plot(NumHospitalization.DAGS,4)
-lean_strength_plot(NumHospitalization.DAGS,5)
-
-# Fistula, HBI, Steroids 34
-NumHospitalization.DAGS.glm=glm(respData.original[,8]~.,data=predData1.stan[,c(9,18,13)],family=poisson())
-summary(NumHospitalization.DAGS.glm)
-
-# NumObstruction DAGS
-NumObstruction.DAGS=get_DAGS(predData1.stan,respData.original[,9],"NumObstruction",c(9,13:17),predData1.stan.imp,9)
-lean_strength_plot(NumObstruction.DAGS,1)
-lean_strength_plot(NumObstruction.DAGS,2)
-lean_strength_plot(NumObstruction.DAGS,3)
-lean_strength_plot(NumObstruction.DAGS,4)
-lean_strength_plot(NumObstruction.DAGS,5)
-
-# Steroids 34, Stricture
-NumObstruction.DAGS.glm=glm(respData.original[,9]~.,data=predData1.stan[,c(18,7)],family=poisson())
-summary(NumObstruction.DAGS.glm)
-
-# Combined response DAGS #####
-
-# Combined BinAbdSurg DAGS
-BinAbdSurg.c.DAGS=get_DAGS(predData1.stan,respData.combined[,1],"BinAbdSurgeries",c(9,13:17),predData1.stan.imp,11)
-lean_strength_plot(BinAbdSurg.c.DAGS,1)
-lean_strength_plot(BinAbdSurg.c.DAGS,2)
-lean_strength_plot(BinAbdSurg.c.DAGS,3)
-lean_strength_plot(BinAbdSurg.c.DAGS,4)
-
-BinAbdSurg.c.DAGS.glm=glm(respData.combined[,1]~.,data=predData1.stan[,c(6,18)],family=binomial())
-summary(BinAbdSurg.c.DAGS.glm)
-
-# Combined BinHospitalization DAGS
-BinHospitlization.c.DAGS=get_DAGS(predData1.stan,respData.combined[,1],"BinHospitalization",c(9,13:17),predData1.stan.imp,12)
-lean_strength_plot(BinHospitlization.c.DAGS,1,.2)
-lean_strength_plot(BinHospitlization.c.DAGS,2,.2)
-lean_strength_plot(BinHospitlization.c.DAGS,3,.2)
-lean_strength_plot(BinHospitlization.c.DAGS,4,.2)
-lean_strength_plot(BinHospitlization.c.DAGS,5,.2)
-
-# Fistula tables #####
-
-# Original responses
-unitab1[which(unitab1[,1]=="Fistula. (6)"),]
-
-getFistulaTable(predData1[,6],respData.original[,1])
-getFistulaTable(predData1[,6],respData.original[,2])
-getFistulaTable(predData1[,6],respData.original[,3])
-getFistulaTable(predData1[,6],respData.original[,4])
-getFistulaTable(predData1[,6],respData.original[,5])
-getFistulaTable(predData1[,6],respData.original[,6])
-getFistulaTable(predData1[,6],respData.original[,7])
-getFistulaTable(predData1[,6],respData.original[,8])
-getFistulaTable(predData1[,6],respData.original[,9])
-
-# Combined responses
-
-getFistulaTable(predData1[,6],respData.combined[,1])
-getFistulaTable(predData1[,6],respData.combined[,2])
-getFistulaTable(predData1[,6],respData.combined[,3])
-getFistulaTable(predData1[,6],respData.combined[,4])
-
-#####
-source.dateVars=c(7,13,17,18,25,27,29,31,33,56,64,65,67,70,72,75,83,86,89,91)
-rbind(source.dateVars,as.vector(colSums(!is.na(source[,source.dateVars]))))
-
-predData=df[,c(2:6,8:12,14:16,18:20,22,24,26,28,30,32,34:56,)]
-
-respCountIndices=c(62,66,68,69,71,74)
-
-ostomyBin=factor(as.numeric(df[,66]!=0)) # Ostomy > 0 factor
-hospitBin=factor(as.numeric(df[,68]!=0)) # Hospitalization > 0 factor
-obstruBin=factor(as.numeric(df[,69]!=0)) # Obstruction > 0 factor
-
-respData=cbind(df[,61],ostomyBin,hospitBin,obstruBin,df[,71],
-               df[,c(74,62,66,68,69)])
-
-names(respData)[c(1,5,7:10)]=c("AbdSurgBin","AbscessBin","#AbdSurg",
-                               "#Ostomies","#Hospitalizations","#TreatedObstructions")
-
-# Just putting responses to back of DF
-df=df[,-c(61,respCountIndices)]
-df=cbind(df, respData)
-
-# Fixing numeric columns stored as chars
-df[,67]=as.numeric(df[,67]!="0")
-df[,87]=as.numeric(df[,87]!="0") # Original had "NO CHROHS" at r198
-
-v=c(1,48,70,87,125,172,184)
-wm2 = rep(NA, times=199)
-wm2[v]=c(7,6,7,6,6,7,6)
-df[v,23]=c("2","5","1","1","1","1","1")
-df=cbind(df, wm2)
-df=df[,c(1:23,110,24:109)]
-
-# Variable indices with categorical (nominal) interpretations
-catVars=c(3:5,8:11,14:16,19:24,35:56,68,70,72,76,84,88:106)
-
-# Insures they are stored as nominal variables
-for (j in catVars){
-  temp=factor(df[,j])
-  df[,j]=addNA(df[,j])
-  levels(df[,j])=c(levels(temp),0)
+# DAGGITY Dag Code
+dag {
+  AW1YP [adjusted,pos="0.580,-1.322"]
+  AbdSurg_E3 [outcome,pos="-1.352,-0.008"]
+  CRP [pos="-1.098,-2.077"]
+  Fistula [exposure,pos="-0.511,-1.891"]
+  IAAH [pos="0.123,-2.302"]
+  IAB_E2 [outcome,pos="0.233,-0.018"]
+  Inflammation [pos="-0.502,-1.086"]
+  Obstruction_E2 [outcome,pos="-0.497,0.502"]
+  Steroid34 [pos="-1.070,1.659"]
+  Stricture [pos="-0.497,-0.322"]
+  AW1YP -> IAB_E2
+  CRP -> Fistula
+  Fistula -> AbdSurg_E3
+  Fistula -> IAB_E2
+  Fistula -> Inflammation
+  IAAH -> AW1YP
+  IAAH -> Fistula
+  Inflammation -> Stricture
+  Steroid34 -> AbdSurg_E3
+  Steroid34 -> IAB_E2
+  Steroid34 -> Obstruction_E2
+  Stricture -> Obstruction_E2
 }
-
-# Variables with numeric interpretation
-numVars=c(1:2,6,12,25,27,29,31,33,58:62,
-          71:72,75,79,82,86:87,107:110)
-
-for(j in numVars){
-  df[,j]=as.numeric(df[,j])
-}
-
-# Get rid of deceased NA observation
-df[199,106]=respData[199,6]=0
-
-# # of negative outcomes for each patient
-numOutcomes=rowSums(respData[6:10])
-df=cbind(df, numOutcomes)
-respData=cbind(respData, numOutcomes)
-predData=df[,-c(7,73,78,81,101:112)]
-
-# Combine surgeries and ostomies
-surg.n = as.numeric(respData[,1])
-ost.n  = as.numeric(respData[,2])-1
-
-surgPost.Bin=as.factor(as.numeric(surg.n | ost.n))
-surgPost.Num = rowSums(respData[,7:8])
-
-respData=cbind(respData,as.factor(surgPost.Bin),surgPost.Num)
-names(respData)[12]="surgPost.Bin"
