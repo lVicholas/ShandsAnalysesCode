@@ -1,10 +1,10 @@
 library(readxl)
 library(writexl)
 library(MASS)
-library(AER)
 
-setwd("C:/local/R/OtherStudy")
-data=data.frame(read_xlsx("Encounters in IBD With Race and Ethnicity.xlsx"))
+# Data not included due to sensitivity
+setwd("C:/local/R/IBD_database_study")
+ibd_endounters=data.frame(read_xlsx("Encounters in IBD With Race and Ethnicity.xlsx"))
 
 response_names=c("Ambulatory_total","Ed_total","Ed_to_inpatient_total","Inpatient_total",
                  "Ambulatory_+_anti-TNF","Ed_+_anti-TNF","Ed_to_inpatient_+_anti-TNF","Inpatient_+_anti-TNF",
@@ -13,6 +13,7 @@ response_names=c("Ambulatory_total","Ed_total","Ed_to_inpatient_total","Inpatien
 # Total # of people in database for each race
 # 1st 4 elements for Caucasians, Hispanics, African-Americans, Asian-Americans
 # 2nd 4 elements for # of each race taking an anti-TNF
+# 3rd 4 elements for # of each race non taking anti-TNF
 race_totals=c(32138,6690,4835,370,3855,657,489,31)
 race_totals=t(data.frame(c(race_totals,race_totals[1:4]-race_totals[5:8])))
 names(race_totals)=c("Caucassians_total","Hispanics_total","African_Americans_total","Asian_Americans_total",
@@ -101,6 +102,7 @@ get_table_race_t_tests=function(r1,r2){
   
 }
 
+# Writing tables to files
 caucasian_vs_other_races_test=list(Caucasians_VS_Hispanics=get_table_race_t_tests(1,2),
                                    Caucasians_VS_African_Americans=get_table_race_t_tests(1,3),
                                    Caucasians_VS_Asian_Americans=get_table_race_t_tests(1,4))
@@ -162,3 +164,99 @@ TNF_comparisons=list(Caucasians=get_TNF_comparisons(1),
                      African_Americans=get_TNF_comparisons(3),
                      Asian_Americans=get_TNF_comparisons(4))
 write_xlsx(TNF_comparisons,"TNF_comparisons.xlsx")
+
+###### Non-IBD encounters ##################################################################################################
+############################################################################################################################
+
+non_ibd_race_totals=c(11308102,4015296,3056464,238151)
+non_ibd_race_totals.ambulance=c(8253663,2825098,2294987,163346)
+non_ibd_race_totals.ed_visit=c(5585354,2246372,1865123,88837)
+
+non_ibd_encounters.ambulance.race_zeroes=c(3056437,1190732,761751,73835)
+non_ibd_encounters.ed_visit.race_zeroes=c(5735179,1770452,1192327,149483)
+
+ambulance_and_CRP_2_zeroes=c(497,155,64,10)
+ambulance_and_hgb_12_zeroes=c(965,251,153,20)
+
+my_t_test=function(total1,zero1,total2,zero2){
+  
+  x=rep(c(0,1),times=c(zero1,total1-zero1))
+  y=rep(c(0,1),times=c(zero2,total2-zero2))
+  return(t.test(x,y,var.equal=F))
+  
+}
+get_race_t_tests=function(totals,zeroes,r1,r2){
+  
+  return(
+    my_t_test(totals[r1],zeroes[r1],totals[r2],zeroes[r2])
+  )
+  
+}
+
+# Non-IBD Encounters
+# Ambulance
+white_vs_hispanic_non_ibd.ambulance=get_race_t_tests(non_ibd_race_totals.ambulance,non_ibd_encounters.ambulance.race_zeroes,1,2)
+white_vs_african_american_non_ibd.ambulance=get_race_t_tests(non_ibd_race_totals.ambulance,non_ibd_encounters.ambulance.race_zeroes,1,3)
+white_vs_asian_american_non_ibd.ambulance=get_race_t_tests(non_ibd_race_totals.ambulance,non_ibd_encounters.ambulance.race_zeroes,1,4)
+
+hispanic_vs_african_american_non_ibd.ambulance=get_race_t_tests(non_ibd_race_totals.ambulance,non_ibd_encounters.ambulance.race_zeroes,2,3)
+hispanic_vs_asian_american_non_ibd.ambulance=get_race_t_tests(non_ibd_race_totals.ambulance,non_ibd_encounters.ambulance.race_zeroes,2,4)
+
+african_american_vs_asian_american_non_ibd.ambulance=get_race_t_tests(non_ibd_race_totals.ambulance,non_ibd_encounters.ambulance.race_zeroes,3,4)
+
+white_vs_hispanic_non_ibd.ambulance
+white_vs_african_american_non_ibd.ambulance
+white_vs_asian_american_non_ibd.ambulance
+
+hispanic_vs_african_american_non_ibd.ambulance
+hispanic_vs_asian_american_non_ibd.ambulance
+
+african_american_vs_asian_american_non_ibd.ambulance
+
+# ED vistic
+white_vs_hispanic_non_ibd.ed=get_race_t_tests(non_ibd_race_totals.ed_visit,non_ibd_encounters.ed_visit.race_zeroes,1,2)
+white_vs_african_american_non_ibd.ed=get_race_t_tests(non_ibd_race_totals.ed_visit,non_ibd_encounters.ed_visit.race_zeroes,1,3)
+white_vs_asian_american_non_ibd.ed=get_race_t_tests(non_ibd_race_totals.ed_visit,non_ibd_encounters.ed_visit.race_zeroes,1,4)
+
+hispanic_vs_african_american_non_ibd.ed=get_race_t_tests(non_ibd_race_totals.ed_visit,non_ibd_encounters.ed_visit.race_zeroes,2,3)
+hispanic_vs_asian_american_non_ibd.ed=get_race_t_tests(non_ibd_race_totals.ed_visit,non_ibd_encounters.ed_visit.race_zeroes,2,4)
+
+african_american_vs_asian_american_non_ibd.ed=get_race_t_tests(non_ibd_race_totals.ed_visit,non_ibd_encounters.ed_visit.race_zeroes,3,4)
+
+# Ambulance + CRP > 2
+white_vs_hispanic.ambulance_crp=get_race_t_tests(race_totals,ambulance_and_CRP_2_zeroes,1,2)
+white_vs_african_american.ambulance_crp=get_race_t_tests(race_totals,ambulance_and_CRP_2_zeroes,1,3)
+white_vs_asian_american.ambulance_crp=get_race_t_tests(race_totals,ambulance_and_CRP_2_zeroes,1,4)
+
+hispanic_vs_african_american.ambulance_crp=get_race_t_tests(race_totals,ambulance_and_CRP_2_zeroes,2,3)
+hispanic_vs_asian_american.ambulance_crp=get_race_t_tests(race_totals,ambulance_and_CRP_2_zeroes,2,4)
+
+african_american_vs_asian_american.ambulance_crp=get_race_t_tests(race_totals,ambulance_and_CRP_2_zeroes,3,4)
+
+white_vs_hispanic.ambulance_crp
+white_vs_african_american.ambulance_crp
+white_vs_asian_american.ambulance_crp
+
+hispanic_vs_african_american.ambulance_crp
+hispanic_vs_asian_american.ambulance_crp
+
+african_american_vs_asian_american.ambulance_crp
+
+# Ambulance + HGB < 12
+white_vs_hispanic.ambulance_hgb=get_race_t_tests(race_totals,ambulance_and_hgb_12_zeroes,1,2)
+white_vs_african_american.ambulance_hgb=get_race_t_tests(race_totals,ambulance_and_hgb_12_zeroes,1,3)
+white_vs_asian_american.ambulance_hgb=get_race_t_tests(race_totals,ambulance_and_hgb_12_zeroes,1,4)
+
+hispanic_vs_african_american.ambulance_hgb=get_race_t_tests(race_totals,ambulance_and_hgb_12_zeroes,2,3)
+hispanic_vs_asian_american.ambulance_hgb=get_race_t_tests(race_totals,ambulance_and_hgb_12_zeroes,2,4)
+
+african_american_vs_asian_american.ambulance_hgb=get_race_t_tests(race_totals,ambulance_and_hgb_12_zeroes,3,4)
+
+white_vs_hispanic.ambulance_hgb
+white_vs_african_american.ambulance_hgb
+white_vs_asian_american.ambulance_hgb
+
+hispanic_vs_african_american.ambulance_hgb
+hispanic_vs_asian_american.ambulance_hgb
+
+african_american_vs_asian_american.ambulance_hgb
